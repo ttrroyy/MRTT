@@ -188,6 +188,7 @@ class SettingsStore(context: Context) {
         private val UPDATE_LATEST_VERSION = stringPreferencesKey("update_latest_version")
         private val UPDATE_LAST_ERROR = stringPreferencesKey("update_last_error")
         private val UPDATE_CHECK_INTERVAL_HOURS = intPreferencesKey("update_check_interval_hours")
+        private val UPDATE_INCLUDE_BETA = booleanPreferencesKey("update_include_beta")
         private val UPDATE_POSTPONE_UNTIL = longPreferencesKey("update_postpone_until")
         private val UPDATE_POSTPONE_VERSION = stringPreferencesKey("update_postpone_version")
         private val UPDATE_DIALOG_LAST_SHOWN_VERSION = stringPreferencesKey("update_dialog_last_shown_version")
@@ -726,6 +727,7 @@ class SettingsStore(context: Context) {
     val updateLatestVersion: Flow<String> = dataStore.data.map { it[UPDATE_LATEST_VERSION] ?: "" }
     val updateLastError: Flow<String> = dataStore.data.map { it[UPDATE_LAST_ERROR] ?: "" }
     val updateCheckIntervalHours: Flow<Int> = dataStore.data.map { it[UPDATE_CHECK_INTERVAL_HOURS] ?: 24 }
+    val updateIncludeBeta: Flow<Boolean> = dataStore.data.map { it[UPDATE_INCLUDE_BETA] ?: false }
     val updatePostponeUntil: Flow<Long> = dataStore.data.map { it[UPDATE_POSTPONE_UNTIL] ?: 0L }
     val updatePostponeVersion: Flow<String> = dataStore.data.map { it[UPDATE_POSTPONE_VERSION] ?: "" }
 
@@ -894,6 +896,10 @@ class SettingsStore(context: Context) {
         dataStore.edit { prefs ->
             prefs[UPDATE_CHECK_INTERVAL_HOURS] = hours
         }
+    }
+
+    suspend fun saveUpdateIncludeBeta(enabled: Boolean) {
+        dataStore.edit { it[UPDATE_INCLUDE_BETA] = enabled }
     }
 
     suspend fun saveUpdatePostpone(version: String, until: Long) {

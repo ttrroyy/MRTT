@@ -106,7 +106,6 @@ internal fun ConnectionTab(
     val savedMaxGroupId by settingsStore.maxGroupId.collectAsStateWithLifecycle(initialValue = "")
     val savedMaxAccessToken by settingsStore.maxAccessToken.collectAsStateWithLifecycle(initialValue = "")
     val transportMode by settingsStore.transportMode.collectAsStateWithLifecycle(initialValue = MrttConstants.Transport.MODE_VK)
-    val jitsiRoomOverride by settingsStore.jitsiRoomOverride.collectAsStateWithLifecycle(initialValue = "")
 
     val activeProfileId by settingsStore.activeConnectionProfileId.collectAsStateWithLifecycle(initialValue = "")
     // Старые установки: ссылка из настроек становится профилем, иначе подключение было бы запрещено.
@@ -141,7 +140,7 @@ internal fun ConnectionTab(
     val maxReady = (maxLinkActive || maxBindingActive) && savedMaxAccessToken.isNotBlank()
     val hashesReady = when (transportMode) {
         MrttConstants.Transport.MODE_MAX -> maxReady
-        MrttConstants.Transport.MODE_JITSI -> jitsiRoomOverride.isNotBlank() || (mrttLinkMode && !parsedLink?.jitsiRoom.isNullOrBlank())
+        MrttConstants.Transport.MODE_JITSI -> false
         else -> hashSettingsLoaded && ConnectionStartPolicy.hasReadyVkCredentials(
             linkMode = mrttLinkMode,
             linkHashCount = linkHashes.size,

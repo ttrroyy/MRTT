@@ -222,27 +222,6 @@ internal fun ServerSettingsSection(control: ServerControl, server: com.mrtt.clie
             }) { Text("Применить ко всем конфигам") }
         }
         AppSectionCard {
-            Text("Jitsi", fontWeight = FontWeight.SemiBold)
-            var roomInput by remember(loaded) { mutableStateOf(loaded.jitsiRoom.takeIf { it.isNotBlank() }?.let { "https://$it" }.orEmpty()) }
-            com.mrtt.client.ui.common.JitsiRoomField(roomInput, { value ->
-                roomInput = value
-                form = form.copy(jitsiRoom = com.mrtt.client.ui.utils.parseJitsiRoomInput(value) ?: value)
-            })
-            CompactDropdownSetting(
-                title = "Участников в комнате",
-                selectedKey = form.jitsiSeats.toString(),
-                options = listOf(2, 4, 6, 8, 12, 16).map { it.toString() to it.toString() },
-                enabled = true,
-                onSelected = { form = form.copy(jitsiSeats = it.toInt()) },
-            )
-            Text(
-                if (com.mrtt.client.ui.utils.parseJitsiRoomInput(roomInput) == null) "Создайте конференцию на любом сервере Jitsi и вставьте ссылку: сервер зайдёт в неё сразу после сохранения, переустанавливать не нужно."
-                else "Сервер сидит в ${form.jitsiRoom}. Новые ссылки подписок несут эту комнату; у своего профиля её можно вставить в «Комнату Jitsi».",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        AppSectionCard {
             Text("Выходной IP", fontWeight = FontWeight.SemiBold)
             CompactDropdownSetting(
                 title = "Приоритет выходного IP",

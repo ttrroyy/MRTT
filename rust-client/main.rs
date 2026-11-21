@@ -284,6 +284,9 @@ async fn run(arguments: Arguments) -> Result<i32> {
         run_vk_hash_validation(&arguments).await?;
         return Ok(EXIT_NORMAL);
     }
+    if !arguments.jitsi.trim().is_empty() {
+        bail!("Jitsi is no longer supported");
+    }
     let max_mode = !arguments.max.trim().is_empty();
     if max_mode && (!arguments.vk.trim().is_empty() || arguments.vk_hash_mode == "auto_js") {
         bail!("[MAX] Режимы MAX и VK взаимоисключающие в одном экземпляре клиента");

@@ -23,8 +23,8 @@ suspend fun resolveConnectionSource(store: SettingsStore): ConnectionSource? {
     // Без активного профиля подключаться не к чему: старая ссылка в настройках не считается.
     if (store.activeConnectionProfileId.first().isBlank()) return null
     val transportMode = store.transportMode.first()
+    if (transportMode == MrttConstants.Transport.MODE_JITSI) return null
     val maxTransportSelected = transportMode == MrttConstants.Transport.MODE_MAX
-    val jitsiSelected = transportMode == MrttConstants.Transport.MODE_JITSI
     val invalidHashes = VkHashValidationCodec.decode(store.vkHashCheckResults.first())
     fun activeHashes(raw: String): String {
         val rawList = raw.split(Regex("[,\\s\\n]+")).map(String::trim).filter { it.length >= 16 }.distinct()
@@ -47,12 +47,6 @@ suspend fun resolveConnectionSource(store: SettingsStore): ConnectionSource? {
             vkAccessToken = if (tokenFromLink) link.vkAccessToken else "",
             tokenFromLink = tokenFromLink,
             maxGroupId = if (maxTransportSelected) link.maxGroupId.ifBlank { store.maxGroupId.first() } else "",
-            jitsiRoom = if (jitsiSelected) store.jitsiRoomOverride.first().ifBlank { link.jitsiRoom } else "",
-            jitsiSeats = if (jitsiSelected && store.jitsiRoomOverride.first().ifBlank { link.jitsiRoom } == link.jitsiRoom) {
-                link.jitsiSeats
-            } else {
-                0
-            },
         )
     }
 

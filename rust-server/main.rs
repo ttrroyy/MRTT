@@ -25,13 +25,8 @@ pub(crate) fn collect_allocator_thread_heap() -> bool {
 
 mod dataplane;
 mod exit_routes;
-// Peer discovery helpers of the shared module serve the client only.
-#[allow(dead_code)]
-#[path = "../shared/jitsi_room.rs"]
-mod jitsi_room;
 #[path = "../shared/stun_probe.rs"]
 mod stun_probe;
-mod jitsi_relay;
 #[path = "../shared/dtls.rs"]
 pub mod dtls;
 mod model;
@@ -1151,13 +1146,7 @@ async fn async_main() -> Result<()> {
     tokio::spawn(auto_restart_loop(app.clone(), auto_restart_interval_rx));
 
     let protocol_runtime = protocol::start(app.clone()).await?;
-    // Jitsi is always available; the owner sets the room from the app, and the relay follows it live.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    let jitsi = {
-        let db = app.db.read().await;
-        jitsi_relay::Config::from_db(&db)
-    };
-    jitsi_relay::start(app.clone(), args.listen.port(), jitsi);
     let mut protocol_status = protocol_runtime.status_receiver();
     let mut web_task = tokio::spawn(async move { web_panel::run(web_app).await });
     tokio::spawn(protocol::session_janitor(app.clone()));

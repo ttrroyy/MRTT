@@ -48,7 +48,7 @@ struct CreateClientRequest {
     /// 0 — без лимита; поле не передано — не менять (при создании — одно устройство).
     #[serde(default)]
     max_devices: Option<u32>,
-    /// Транспорт по умолчанию для профиля из ссылки: "vk", "jitsi" или пусто; не передан — не менять.
+    /// Транспорт по умолчанию для профиля из ссылки: "vk" или пусто; не передан — не менять.
     #[serde(default)]
     transport: Option<String>,
     /// true: в ссылке нет комнаты Jitsi; не передан — не менять.
@@ -64,8 +64,7 @@ fn normalize_link_transport(raw: &str) -> Result<String, &'static str> {
     match raw.trim() {
         "" => Ok(String::new()),
         "vk" => Ok("vk".to_owned()),
-        "jitsi" => Ok("jitsi".to_owned()),
-        _ => Err("transport must be vk, jitsi or empty"),
+        _ => Err("transport must be vk or empty"),
     }
 }
 
@@ -184,10 +183,6 @@ struct SettingsRequest {
     vk_token: Option<String>,
     #[serde(default)]
     vk_hashes: Option<String>,
-    #[serde(default)]
-    jitsi_room: Option<String>,
-    #[serde(default)]
-    jitsi_seats: Option<u8>,
     #[serde(default)]
     exits: Option<Vec<model::ExitLink>>,
     #[serde(default)]
@@ -541,7 +536,7 @@ fn make_client_link(
     vk_token: bool,
     server_hashes: &str,
     transport: &str,
-    link_room_off: bool,
+    _link_room_off: bool,
 ) -> String {
     let mut payload = format!(
         "connect?v=2&host={}&peer={}",
@@ -573,16 +568,9 @@ fn make_client_link(
                 .join("+"),
         );
     }
-    if transport == "vk" || transport == "jitsi" {
+    if transport == "vk" {
         payload.push_str("&transport=");
         payload.push_str(transport);
-    }
-    if !link_room_off
-        && let Some(room) = crate::jitsi_relay::current_room()
-    {
-        payload.push_str("&jitsi=");
-        payload.push_str(&url_encode(&room));
-        payload.push_str(&format!("&seats={}", crate::jitsi_relay::current_seats()));
     }
     encrypt_mrtt_link(&payload)
 }
@@ -970,8 +958,6 @@ async fn settings_get(State(state): State<WebState>) -> impl IntoResponse {
         "vk_token": db.vk_access_token,
         "vk_hashes": vk_hashes,
         "peer_port": state.app.listen.port(),
-        "jitsi_room": db.jitsi_room,
-        "jitsi_seats": db.jitsi_seats(),
         "exits": db.exits,
         "default_exit": db.default_exit,
         "exit_priority": db.exit_priority,
@@ -1039,20 +1025,6 @@ async fn settings_post(
         },
         None => None,
     };
-    let requested_jitsi_room = match request.jitsi_room.as_deref().map(str::trim) {
-        Some("") => Some(String::new()),
-        Some(raw) => match crate::jitsi_room::RoomTarget::parse(raw) {
-            Some(room) => Some(room.to_string()),
-            None => return (StatusCode::BAD_REQUEST, "invalid Jitsi room").into_response(),
-        },
-        None => None,
-    };
-    if let Some(seats) = request.jitsi_seats
-        && !(1..=crate::model::MAX_JITSI_SEATS).contains(&seats)
-    {
-        return (StatusCode::BAD_REQUEST, "Jitsi seats must be 1..16").into_response();
-    }
-    let jitsi_changed = requested_jitsi_room.is_some() || request.jitsi_seats.is_some();
     let requested_auto_restart_interval = request.auto_restart_interval_hours;
     let (revision, retired_main_password, applied_dns) = {
         let mut db = state.app.db.write().await;
@@ -1085,12 +1057,6 @@ async fn settings_post(
         if let Some(hashes) = requested_vk_hashes {
             db.vk_hashes = hashes;
         }
-        if let Some(room) = requested_jitsi_room {
-            db.jitsi_room = room;
-        }
-        if let Some(seats) = request.jitsi_seats {
-            db.jitsi_seats = Some(seats);
-        }
         if let Some(exits) = request.exits {
             db.exits = exits;
         }
@@ -1099,9 +1065,6 @@ async fn settings_post(
         }
         if let Some(priority) = request.exit_priority {
             db.exit_priority = priority;
-        }
-        if jitsi_changed {
-            crate::jitsi_relay::configure(crate::jitsi_relay::Config::from_db(&db));
         }
         (
             state.app.db_persistence.submit(db.clone()),

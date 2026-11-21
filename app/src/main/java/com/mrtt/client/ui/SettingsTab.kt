@@ -159,9 +159,6 @@ internal fun SettingsTabContent(
     val maxTransportSelected = transportMode == MrttConstants.Transport.MODE_MAX
     // Настройки VK (хеши, режим кредов, капча) нужны только транспорту VK
     val vkTransportSelected = transportMode == MrttConstants.Transport.MODE_VK
-    val jitsiRoomOverride by settingsStore.jitsiRoomOverride.collectAsStateWithLifecycle(initialValue = "")
-    val jitsiWorkers by settingsStore.jitsiWorkers.collectAsStateWithLifecycle(initialValue = MrttConstants.Tunnel.DEFAULT_JITSI_WORKERS)
-    var showJitsiRoomDialog by rememberSaveable { mutableStateOf(false) }
     var pendingTcpTransportSelection by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     fun applyTurnTransport(transport: String) {
@@ -221,7 +218,6 @@ internal fun SettingsTabContent(
         VkHashValidationCodec.active(allHashes, vkHashCheckResults)
     }
     val parsedMrttLink = remember(linkText) { parseMrttLink(linkText) }
-    val jitsiRoomReady = jitsiRoomOverride.isNotBlank() || !parsedMrttLink?.jitsiRoom.isNullOrBlank()
     val preferLinkHashes by settingsStore.vkPreferLinkHashes.collectAsStateWithLifecycle(initialValue = false)
     val ownVkBound = savedVkAccessToken?.isNotBlank() == true
     val linkVkAvailable = participantMode &&
@@ -459,7 +455,7 @@ internal fun SettingsTabContent(
         (!parsedMrttLink?.maxGroupId.isNullOrBlank() || savedMaxGroupId.isNotBlank())
     val hashesReadyForTunnel = when (transportMode) {
         MrttConstants.Transport.MODE_MAX -> maxTransportReady
-        MrttConstants.Transport.MODE_JITSI -> jitsiRoomReady
+        MrttConstants.Transport.MODE_JITSI -> false
         else -> when {
             participantMode && linkHashes.isNotEmpty() -> true
             participantMode && linkTokenActive -> true
@@ -556,7 +552,6 @@ internal fun SettingsTabContent(
                 settingsStore = settingsStore,
                 transportMode = transportMode,
                 maxReady = maxTransportReady,
-                jitsiReady = jitsiRoomReady,
                 onMaxRequested = {
                     if (maxTransportRiskAcknowledged) {
                         scope.launch { settingsStore.saveTransportMode(MrttConstants.Transport.MODE_MAX) }
@@ -582,13 +577,7 @@ internal fun SettingsTabContent(
                         modifier = Modifier.padding(bottom = 12.dp),
                     )
                 }
-                if (transportMode == MrttConstants.Transport.MODE_JITSI) {
-                    JitsiRoomButton(
-                        overrideRoom = jitsiRoomOverride,
-                        linkRoom = parsedMrttLink?.jitsiRoom.orEmpty(),
-                        onClick = { showJitsiRoomDialog = true },
-                    )
-                } else if (!vkTransportSelected) {
+                if (!vkTransportSelected) {
                     // MAX не использует VK-хеши и токен из ссылки.
                 } else {
                     if (linkVkAvailable && ownVkBound) CompactDropdownSetting(
@@ -728,31 +717,19 @@ internal fun SettingsTabContent(
                     },
                 )
 
-                if (transportMode == MrttConstants.Transport.MODE_JITSI) {
-                    JitsiWorkersControl(
-                        value = jitsiWorkers,
-                        fixedSeats = parsedMrttLink?.jitsiSeats?.takeIf { it > 0 && jitsiRoomOverride.isBlank() },
-                        // Места сервера из ссылки, если комната своя не задана: больше воркеров они не примут.
-                        maximum = parsedMrttLink?.jitsiSeats?.takeIf { it > 0 && jitsiRoomOverride.isBlank() }
-                            ?: MrttConstants.Tunnel.MAX_JITSI_WORKERS,
-                        enabled = !tunnelRunning,
-                        onValueChange = { scope.launch { settingsStore.saveJitsiWorkers(it) } },
-                    )
-                } else {
-                    TunnelWorkersControl(
-                        value = currentWorkers,
-                        maximum = selectableMaxWorkers,
-                        enabled = !tunnelRunning,
-                        onValueChange = { value ->
-                            val newWorkers = value.toInt()
-                            scope.launch {
-                                settingsStore.saveWorkersPerHash(newWorkers)
-                            }
-                        },
-                        onInfo = { showWorkersInfoDialog = true },
-                        fixedWorkers = effectiveServerWorkers,
-                    )
-                }
+                TunnelWorkersControl(
+                    value = currentWorkers,
+                    maximum = selectableMaxWorkers,
+                    enabled = !tunnelRunning,
+                    onValueChange = { value ->
+                        val newWorkers = value.toInt()
+                        scope.launch {
+                            settingsStore.saveWorkersPerHash(newWorkers)
+                        }
+                    },
+                    onInfo = { showWorkersInfoDialog = true },
+                    fixedWorkers = effectiveServerWorkers,
+                )
 
                 AnimatedVisibility(
                     visible = vkTransportSelected && vkAuthMode == MrttConstants.VkAuth.MODE_CAPTCHA,
@@ -920,16 +897,6 @@ internal fun SettingsTabContent(
                         pendingAutoJsSelection?.invoke()
                         pendingAutoJsSelection = null
                     },
-                )
-            }
-            if (showJitsiRoomDialog) {
-                JitsiRoomDialog(
-                    current = jitsiRoomOverride,
-                    onSave = { room ->
-                        showJitsiRoomDialog = false
-                        scope.launch { settingsStore.saveJitsiRoomOverride(room) }
-                    },
-                    onDismiss = { showJitsiRoomDialog = false },
                 )
             }
             if (showWorkersInfoDialog) {
@@ -1202,7 +1169,6 @@ private fun TransportModeSelector(
     settingsStore: SettingsStore,
     transportMode: String,
     maxReady: Boolean,
-    jitsiReady: Boolean,
     onMaxRequested: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -1236,129 +1202,19 @@ private fun TransportModeSelector(
                     },
                     modifier = Modifier.weight(1f),
                 )
-                TransportModeChip(
-                    label = "Jitsi",
-                    selected = transportMode == MrttConstants.Transport.MODE_JITSI,
-                    enabled = true,
-                    onClick = {
-                        scope.launch {
-                            settingsStore.saveTransportMode(MrttConstants.Transport.MODE_JITSI)
-                            profiles.rememberTransport(MrttConstants.Transport.MODE_JITSI)
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                )
             }
             Text(
                 when {
                     transportMode == MrttConstants.Transport.MODE_MAX && !maxReady ->
                         "Чтобы подключиться через MAX, нажмите «Привязать MAX» ниже."
-                    transportMode == MrttConstants.Transport.MODE_JITSI && !jitsiReady ->
-                        "Вставьте ссылку на комнату Jitsi в «Комната Jitsi» ниже."
                     transportMode == MrttConstants.Transport.MODE_JITSI ->
-                        "Jitsi: туннель идёт через комнату сервера на видеомосте, UDP поддерживается."
+                        "Выберите VK или MAX для этого профиля."
                     else -> "Выберите транспорт для подключения."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-    }
-}
-
-/** Как «Ссылки VK звонков»: кнопка показывает, откуда комната, и открывает ввод своей. */
-@Composable
-private fun JitsiRoomButton(overrideRoom: String, linkRoom: String, onClick: () -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedButton(
-            onClick = onClick,
-            modifier = Modifier.fillMaxWidth().height(MrttSizes.ControlHeight),
-            shape = MrttShapes.Pill,
-            colors = ButtonDefaults.outlinedButtonColors(
-                containerColor = Color.Transparent,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-            ),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
-        ) {
-            Icon(Icons.Filled.Phone, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Комната Jitsi", fontWeight = FontWeight.SemiBold)
-        }
-        Text(
-            when {
-                overrideRoom.isNotBlank() -> "Своя комната: $overrideRoom"
-                linkRoom.isNotBlank() -> "Из ссылки: $linkRoom"
-                else -> "Вставьте ссылку на комнату, в которой сидит ваш сервер"
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-/** Воркеры Jitsi: каждый заходит в комнату отдельным участником, больше мест сервера (16) смысла нет. */
-@Composable
-private fun JitsiWorkersControl(value: Int, maximum: Int, enabled: Boolean, fixedSeats: Int?, onValueChange: (Int) -> Unit) {
-    val minimum = MrttConstants.Tunnel.MIN_JITSI_WORKERS
-    val top = maximum.coerceAtLeast(minimum)
-    var local by remember(value, top) { mutableStateOf(value.coerceIn(minimum, top).toFloat()) }
-    val shown = fixedSeats?.toFloat() ?: local
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                if (fixedSeats != null) "Потоки (места сервера)" else "Потоки",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                shown.toInt().toString(),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        CompactSteppedSlider(
-            value = shown,
-            onValueChange = { local = it },
-            onValueChangeFinished = { onValueChange(local.toInt()) },
-            valueRange = minimum.toFloat()..maxOf(top, shown.toInt()).toFloat(),
-            stepSize = 1f,
-            enabled = enabled && fixedSeats == null,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Text(
-            "Каждый поток заходит в комнату Jitsi отдельным участником, примерно 4 Мбит/с на каждого. Потоков не больше, чем мест у сервера.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun JitsiRoomDialog(current: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
-    var text by rememberSaveable { mutableStateOf(if (current.isBlank()) "" else "https://$current") }
-    val parsed = com.mrtt.client.ui.utils.parseJitsiRoomInput(text)
-    com.mrtt.client.ui.common.MrttFormDialog(
-        title = "Комната Jitsi",
-        onDismiss = onDismiss,
-        confirmText = "Сохранить",
-        confirmEnabled = (text.isBlank() || parsed != null) && parsed.orEmpty() != current,
-        onConfirm = { onSave(parsed.orEmpty()) },
-    ) {
-        com.mrtt.client.ui.common.JitsiRoomField(text, { text = it })
-        Text(
-            when {
-                text.isBlank() -> "Пусто: комната берётся из ссылки профиля."
-                parsed == null -> "Нужна ссылка вида https://сервер/комната, в имени комнаты только латиница и цифры."
-                else -> "Сервер должен сидеть в этой же комнате: на своём сервере укажите её в «Серверы» → сервер → «Настройки» → Jitsi."
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = if (text.isNotBlank() && parsed == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 

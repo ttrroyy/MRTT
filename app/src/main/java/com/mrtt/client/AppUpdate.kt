@@ -1,12 +1,21 @@
 package com.mrtt.client
 
 import android.util.Log
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.io.File
+import java.security.MessageDigest
 
 const val UPDATE_CHECK_NEVER = MrttConstants.Update.CHECK_NEVER
 const val DEFAULT_UPDATE_CHECK_INTERVAL_HOURS = MrttConstants.Update.DEFAULT_CHECK_INTERVAL_HOURS
@@ -30,17 +39,18 @@ fun updateIntervalHoursToMillis(hours: Int): Long? = when {
 data class AppReleaseInfo(
     val versionTag: String,
     val releaseUrl: String,
-    val source: RemoteVersionSource
+    val source: RemoteVersionSource,
+    val apk: UpdateApk?,
 )
+
+data class UpdateApk(val url: String, val sha256: String, val size: Long)
 
 enum class RemoteVersionSource {
     Release,
     Tag
 }
 
-suspend fun fetchLatestReleaseInfo(localVersion: String? = null): AppReleaseInfo? = withContext(Dispatchers.IO) {
-    // Pre-releases are offered only to builds that are pre-releases themselves.
-    val includePrereleases = localVersion != null && preReleaseNumber(localVersion) != null
+suspend fun fetchLatestReleaseInfo(includePrereleases: Boolean): AppReleaseInfo? = withContext(Dispatchers.IO) {
     val response = fetchGitHubApi(GITHUB_RELEASES_URL) ?: return@withContext null
     val releases = try {
         JSONArray(response)
@@ -53,8 +63,8 @@ suspend fun fetchLatestReleaseInfo(localVersion: String? = null): AppReleaseInfo
     for (i in 0 until releases.length()) {
         val json = releases.optJSONObject(i) ?: continue
         if (json.optBoolean("draft")) continue
-        if (json.optBoolean("prerelease") && !includePrereleases) continue
         val release = json.toAppReleaseInfo() ?: continue
+        if (!includePrereleases && (json.optBoolean("prerelease") || preReleaseNumber(release.versionTag) != null)) continue
         if (isLegacyRelease(release.versionTag)) continue
         if (bestRelease == null || isNewerVersion(bestRelease.versionTag, release.versionTag)) {
             bestRelease = release
@@ -175,7 +185,75 @@ private fun JSONObject.toAppReleaseInfo(): AppReleaseInfo? {
     val versionTag = normalizeVersionTag(optString("tag_name"))
     val releaseUrl = optString("html_url").trim()
     if (versionTag.isBlank() || releaseUrl.isBlank()) return null
-    return AppReleaseInfo(versionTag, releaseUrl, RemoteVersionSource.Release)
+    val assets = optJSONArray("assets") ?: JSONArray()
+    val apkNames = (Build.SUPPORTED_ABIS.toList() + "universal").map { "app-$it-maxTest.apk" }
+    val build = apkNames.firstNotNullOfOrNull { name ->
+        (0 until assets.length()).mapNotNull(assets::optJSONObject).firstOrNull { it.optString("name") == name }
+    }
+    val apk = build?.let {
+        val url = it.optString("browser_download_url")
+        val digest = it.optString("digest").removePrefix("sha256:")
+        val size = it.optLong("size")
+        if (url.startsWith("https://github.com/ttrroyy/MRTT/releases/download/", ignoreCase = true) &&
+            digest.matches(Regex("[a-f0-9]{64}")) && size in 1..400_000_000L) UpdateApk(url, digest, size) else null
+    }
+    return AppReleaseInfo(versionTag, releaseUrl, RemoteVersionSource.Release, apk)
+}
+
+suspend fun installUpdate(context: Context, release: AppReleaseInfo) {
+    val apk = release.apk
+    if (apk == null) {
+        Toast.makeText(context, "Для этой версии нет проверенного APK", Toast.LENGTH_LONG).show()
+        return
+    }
+    if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
+        Toast.makeText(context, "Разрешите установку из MRTT и нажмите «Обновить» ещё раз", Toast.LENGTH_LONG).show()
+        context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
+        return
+    }
+    Toast.makeText(context, "Скачиваем обновление MRTT", Toast.LENGTH_SHORT).show()
+    val uri = withContext(Dispatchers.IO) {
+        runCatching {
+            val directory = File(context.cacheDir, "updates")
+            directory.mkdirs()
+            val file = File.createTempFile("mrtt-", ".apk", directory)
+            try {
+                val connection = URL(apk.url).openConnection() as HttpURLConnection
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 30_000
+                try {
+                    val hash = MessageDigest.getInstance("SHA-256")
+                    var downloaded = 0L
+                    connection.inputStream.use { input ->
+                        file.outputStream().use { out ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                val size = input.read(buffer)
+                                if (size < 0) break
+                                downloaded += size
+                                check(downloaded <= apk.size)
+                                hash.update(buffer, 0, size)
+                                out.write(buffer, 0, size)
+                            }
+                        }
+                    }
+                    check(downloaded == apk.size && hash.digest().joinToString("") { "%02x".format(it) } == apk.sha256)
+                } finally {
+                    connection.disconnect()
+                }
+                check(context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)?.packageName == context.packageName)
+                directory.listFiles()?.filter { it != file && it.lastModified() < System.currentTimeMillis() - 86_400_000L }?.forEach { it.delete() }
+                FileProvider.getUriForFile(context, "${context.packageName}.logs", file)
+            } catch (error: Exception) {
+                file.delete()
+                throw error
+            }
+        }.getOrNull()
+    }
+    if (uri == null || runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        }.isFailure) Toast.makeText(context, "Не удалось скачать или открыть обновление MRTT", Toast.LENGTH_LONG).show()
 }
 
 private fun versionParts(version: String): List<Int> {

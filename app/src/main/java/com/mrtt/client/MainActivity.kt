@@ -346,6 +346,7 @@ fun MainScreen(
     val updateCheckIntervalHours by settingsStore.updateCheckIntervalHours.collectAsStateWithLifecycle(
         initialValue = DEFAULT_UPDATE_CHECK_INTERVAL_HOURS
     )
+    val updateIncludeBeta by settingsStore.updateIncludeBeta.collectAsStateWithLifecycle(initialValue = false)
     var pendingRelease by remember { mutableStateOf<AppReleaseInfo?>(null) }
     val currentVersion = remember { "v${BuildConfig.VERSION_NAME.removePrefix("v")}" }
     val safeBottomInset = with(density) { WindowInsets.safeDrawing.getBottom(density).toDp() }
@@ -375,7 +376,7 @@ fun MainScreen(
         if (selectedTab == 3) TunnelManager.clearUnreadErrors()
     }
 
-    LaunchedEffect(updateCheckIntervalHours) {
+    LaunchedEffect(updateCheckIntervalHours, updateIncludeBeta) {
         if (updateCheckIntervalHours == UPDATE_CHECK_NEVER) return@LaunchedEffect
 
         val intervalMillis = updateIntervalHoursToMillis(updateCheckIntervalHours)
@@ -384,7 +385,7 @@ fun MainScreen(
 
         suspend fun runUpdateCheck(reason: String) {
             val checkedAt = System.currentTimeMillis()
-            val release = fetchLatestReleaseInfo(currentVersion)
+            val release = fetchLatestReleaseInfo(updateIncludeBeta)
             settingsStore.saveUpdateState(
                 lastCheckAt = checkedAt,
                 latestVersion = release?.versionTag ?: "",
@@ -556,7 +557,7 @@ fun MainScreen(
                         action = UPDATE_DIALOG_ACTION_UPDATE,
                         actedAt = System.currentTimeMillis()
                     )
-                    openReleaseUrl(context, release.releaseUrl)
+                    installUpdate(context, release)
                 }
             }
         )
@@ -679,16 +680,5 @@ private fun ProxyNavigationBar(
                 }
             }
         }
-    }
-}
-
-private fun openReleaseUrl(context: Context, url: String) {
-    try {
-        val intent = Intent(Intent.ACTION_VIEW, url.toUri()).apply {
-            addCategory(Intent.CATEGORY_BROWSABLE)
-        }
-        context.startActivity(intent)
-    } catch (_: Exception) {
-        context.showRaisedToast("Не удалось открыть ссылку", Toast.LENGTH_SHORT)
     }
 }

@@ -158,6 +158,7 @@ fun InfoTab(
     var showCryptoDialog by remember { mutableStateOf(false) }
     val updateLatestVersion by settingsStore.updateLatestVersion.collectAsStateWithLifecycle(initialValue = "")
     val updateLastError by settingsStore.updateLastError.collectAsStateWithLifecycle(initialValue = "")
+    val updateIncludeBeta by settingsStore.updateIncludeBeta.collectAsStateWithLifecycle(initialValue = false)
     val updateStatus = remember(isCheckingUpdates, updateLatestVersion, updateLastError, currentVersion) {
         when {
             isCheckingUpdates -> "Проверяем GitHub releases..."
@@ -234,6 +235,11 @@ fun InfoTab(
                 )
             }
 
+            com.mrtt.client.ui.components.MrttSettingRow(
+                title = "Бета-версии MRTT",
+                checked = updateIncludeBeta,
+                onCheckedChange = { enabled -> scope.launch { settingsStore.saveUpdateIncludeBeta(enabled) } },
+            )
             WideActionTile(
                 title = "Проверить обновления",
                 subtitle = updateStatus,
@@ -242,7 +248,7 @@ fun InfoTab(
                     isCheckingUpdates = true
                     scope.launch {
                         val checkedAt = System.currentTimeMillis()
-                        val release = fetchLatestReleaseInfo(currentVersion)
+                        val release = fetchLatestReleaseInfo(updateIncludeBeta)
                         val latest = release?.versionTag
                         settingsStore.saveUpdateState(
                             lastCheckAt = checkedAt,
@@ -311,7 +317,7 @@ fun InfoTab(
                             action = UPDATE_DIALOG_ACTION_UPDATE,
                             actedAt = System.currentTimeMillis()
                         )
-                        openUrlInBrowser(context, release.releaseUrl)
+                        com.mrtt.client.installUpdate(context, release)
                     }
                 }
             )

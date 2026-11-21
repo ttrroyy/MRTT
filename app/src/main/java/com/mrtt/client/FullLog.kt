@@ -23,7 +23,7 @@ internal object FullLog {
     fun redact(text: String): String = secrets.fold(text) { acc, (pattern, replacement) -> acc.replace(pattern, replacement) }
 
     fun add(source: String, line: String) {
-        if (line.isBlank()) return
+        if (line.isBlank() || !TunnelManager.isLoggingEnabled) return
         val entry = "${synchronized(time) { time.format(Date()) }} [$source] ${redact(line.trim()).take(1000)}"
         synchronized(lines) {
             if (lines.size >= MAX_LINES) lines.removeFirst()
