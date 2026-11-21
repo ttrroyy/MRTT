@@ -101,10 +101,6 @@ impl Events {
     }
 
     /// How many workers the room really takes.
-    pub fn room_seats(&self, seats: usize) {
-        self.emit("ROOM_SEATS", || serde_json::json!({"seats": seats}));
-    }
-
     pub fn tun_lost(&self) {
         self.emit("TUN_LOST", || serde_json::json!({}));
     }

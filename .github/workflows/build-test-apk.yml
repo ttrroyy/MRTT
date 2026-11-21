@@ -285,6 +285,12 @@ jobs:
                   assert f'assets/mrtt-exit-client-{arch}' in files, f'{arch} cascade client missing'
           print('All Rust client ABIs and Linux server assets found in APK')
           PY
+      - name: Verify APK signatures
+        run: |
+          for apk in app/build/outputs/apk/maxTest/*.apk; do
+            echo "$(basename "$apk")"
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk"
+          done
       - name: Upload test APKs
         uses: actions/upload-artifact@v4
         with:
@@ -297,7 +303,7 @@ jobs:
         run: |
           tar -czf "$RUNNER_TEMP/mrtt-server-v1.0.tar.gz" deploy.sh cascade.sh mrtt-linux-* mrtt-exit-client-*
           cd "$RUNNER_TEMP"
-          sha256sum mrtt-server-v1.0.tar.gz > mrtt-server-v1.0.tar.gz.sha256
+          sha256sum mrtt-server-v1.0.tar.gz | tee mrtt-server-v1.0.tar.gz.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: MRTT-server-release

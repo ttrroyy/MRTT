@@ -554,7 +554,6 @@ class SettingsStore(context: Context) {
         val profile = prefs[ACTIVE_PROFILE] ?: 0
         when (prefs[getProfileKey(TRANSPORT_MODE, profile)]) {
             MrttConstants.Transport.MODE_MAX -> MrttConstants.Transport.MODE_MAX
-            MrttConstants.Transport.MODE_JITSI -> MrttConstants.Transport.MODE_JITSI
             else -> MrttConstants.Transport.MODE_VK
         }
     }.onIo()
@@ -1091,7 +1090,7 @@ class SettingsStore(context: Context) {
             val profile = prefs[ACTIVE_PROFILE] ?: 0
             prefs[getProfileKey(TRANSPORT_MODE, profile)] =
                 when (mode) {
-                    MrttConstants.Transport.MODE_MAX, MrttConstants.Transport.MODE_JITSI -> mode
+                    MrttConstants.Transport.MODE_MAX -> mode
                     else -> MrttConstants.Transport.MODE_VK
                 }
         }

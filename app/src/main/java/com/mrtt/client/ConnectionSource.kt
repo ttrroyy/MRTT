@@ -12,10 +12,7 @@ data class ConnectionSource(
     val vkAccessToken: String,
     val tokenFromLink: Boolean,
     val maxGroupId: String = "",
-    /** Комната Jitsi из ссылки, когда выбран транспорт Jitsi. */
-    val jitsiRoom: String = "",
-    /** Места сервера в комнате из ссылки; 0, если неизвестно (например, своя комната). */
-    val jitsiSeats: Int = 0,
+
 )
 
 
@@ -23,7 +20,6 @@ suspend fun resolveConnectionSource(store: SettingsStore): ConnectionSource? {
     // Без активного профиля подключаться не к чему: старая ссылка в настройках не считается.
     if (store.activeConnectionProfileId.first().isBlank()) return null
     val transportMode = store.transportMode.first()
-    if (transportMode == MrttConstants.Transport.MODE_JITSI) return null
     val maxTransportSelected = transportMode == MrttConstants.Transport.MODE_MAX
     val invalidHashes = VkHashValidationCodec.decode(store.vkHashCheckResults.first())
     fun activeHashes(raw: String): String {

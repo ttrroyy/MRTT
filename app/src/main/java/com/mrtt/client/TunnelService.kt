@@ -188,9 +188,8 @@ class TunnelService : Service() {
                         val requestedVkAuthMode = sanitizeVkAuthMode(intent.getStringExtra("vk_auth_mode"))
                         val intentHashes = intent.getStringExtra("vk_hashes") ?: ""
                         val maxGroupId = intent.getStringExtra("max_group_id").orEmpty()
-                        val jitsiRoom = intent.getStringExtra("jitsi_room").orEmpty()
                         // Проверки сети и хешей VK нужны только транспорту VK
-                        val vkTransport = maxGroupId.isBlank() && jitsiRoom.isBlank()
+                        val vkTransport = maxGroupId.isBlank()
                         val maxAccessToken = store.maxAccessToken.first()
                         val hashesFromLink = intent.getBooleanExtra("vk_hashes_from_link", false)
                         val linkAccessToken = intent.getStringExtra("vk_access_token")
@@ -282,8 +281,6 @@ class TunnelService : Service() {
                             vkHashes = resolvedHashes.value,
                             secondaryVkHash = intent.getStringExtra("secondary_vk_hash") ?: "",
                             workersPerHash = startWorkers,
-                            jitsiWorkers = store.jitsiWorkers.first(),
-                            jitsiSeats = intent.getIntExtra("jitsi_seats", 0),
                             port = intent.getIntExtra("port", 0),
                             sni = intent.getStringExtra("sni") ?: "",
                             connectionPassword = intent.getStringExtra("connection_password") ?: "",
@@ -308,7 +305,6 @@ class TunnelService : Service() {
                             vkHashMode = resolvedHashes.mode,
                             vkAccessToken = resolvedHashes.accessToken,
                             maxGroupId = maxGroupId,
-                            jitsiRoom = jitsiRoom,
                             maxAccessToken = maxAccessToken,
                             domainRoutingEnabled = effectiveDomainEnabled,
                             domainIsWhitelist = domainWhite,
@@ -478,7 +474,7 @@ class TunnelService : Service() {
                     else -> requestedVkAuthMode
                 }
                 val accountAutoJs = vkAuthMode == MrttConstants.VkAuth.MODE_AUTO_JS
-                val vkTransport = source.maxGroupId.isBlank() && source.jitsiRoom.isBlank()
+                val vkTransport = source.maxGroupId.isBlank()
                 if (vkTransport && !awaitVkNetwork()) {
                     TunnelManager.starting.value = false
                     return@launch
@@ -510,8 +506,6 @@ class TunnelService : Service() {
                     peer = source.peer,
                     vkHashes = restoredHashes?.value ?: "",
                     secondaryVkHash = store.secondaryVkHash.first(),
-                    jitsiWorkers = store.jitsiWorkers.first(),
-                    jitsiSeats = source.jitsiSeats,
                     workersPerHash = workersPerHash,
                     port = 0,
                     sni = store.sni.first(),
@@ -532,7 +526,6 @@ class TunnelService : Service() {
                     vkHashMode = restoredHashes?.mode ?: MrttConstants.VkAutoHash.MODE_MANUAL,
                     vkAccessToken = restoredHashes?.accessToken.orEmpty(),
                     maxGroupId = source.maxGroupId,
-                    jitsiRoom = source.jitsiRoom,
                     maxAccessToken = store.maxAccessToken.first(),
                     domainRoutingEnabled = store.domainRoutingEnabled.first() ||
                         (!domainWhite && store.templateDomainsEnabled.first()) ||
@@ -550,7 +543,6 @@ class TunnelService : Service() {
                     params.peer.isNotEmpty() &&
                     (
                         (params.maxGroupId.isNotBlank() && params.maxAccessToken.isNotBlank()) ||
-                        params.jitsiRoom.isNotBlank() ||
                         params.vkHashes.isNotEmpty() ||
                             params.vkHashMode == MrttConstants.VkAutoHash.MODE_AUTO_JS
                     )
@@ -646,7 +638,7 @@ class TunnelService : Service() {
             var restartScheduled = false
             try {
                 val previous = TunnelManager.getCurrentParams() ?: return@launch
-                if (previous.maxGroupId.isNotBlank() || previous.jitsiRoom.isNotBlank()) return@launch
+                if (previous.maxGroupId.isNotBlank()) return@launch
                 val store = SettingsStore(applicationContext)
                 val vkHashMode = store.vkHashMode.first()
                 val source = resolveConnectionSource(store) ?: return@launch
@@ -852,7 +844,6 @@ class TunnelService : Service() {
     private fun probeVkThrough(network: Network): Boolean =
         TunnelManager.getCurrentParams().let { params ->
             when {
-                params?.jitsiRoom?.isNotBlank() == true -> listOf("https://${params.jitsiRoom.substringBefore('/')}/")
                 params?.maxGroupId?.isNotBlank() == true -> MAX_PROBE_URLS
                 else -> VK_PROBE_URLS
             }

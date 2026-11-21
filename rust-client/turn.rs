@@ -221,8 +221,6 @@ pub struct TurnConnectTarget<'a> {
 enum TurnOutbound {
     Udp(Arc<UdpSocket>),
     Stream(Arc<TurnStreamWriter>),
-    /// A seat in the server's Jitsi room: datagrams go over the videobridge datachannel.
-    Room(tokio::sync::mpsc::Sender<PacketBuf>),
 }
 
 struct OutboundQueue {
@@ -337,12 +335,6 @@ impl TurnReceiver {
     }
 }
 
-/// In place of a Jitsi host: workers go straight to the peer. The room machinery already does without TURN credentials.
-pub const DIRECT_HOST: &str = "direct.invalid";
-
-/// Server seats the last joining worker saw in the room.
-pub static ROOM_SEATS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 impl TurnAllocation {
     pub async fn connect(
         target: TurnConnectTarget<'_>,
@@ -414,7 +406,7 @@ impl TurnAllocation {
                 let writer_task = tokio::spawn(outbound_writer_loop(queue.clone()));
                 (Some(queue), Some(writer_task))
             }
-            TurnOutbound::Stream(_) | TurnOutbound::Room(_) => (None, None),
+            TurnOutbound::Stream(_) => (None, None),
         };
         let allocation = Arc::new(Self {
             outbound,
@@ -454,213 +446,6 @@ impl TurnAllocation {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = relay_address;
         crate::log_error!("[TURN] Аллокация активна: relay {relay_address}");
         Ok(allocation)
-    }
-
-    /// Seats this worker in `room` and addresses the server seat picked by `seat_hint`.
-    /// The core only keeps bookkeeping for a room seat; its create check refuses port 0, so a dummy one.
-    const ROOM_CORE_PLACEHOLDER: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 9);
-
-    fn room_core() -> Result<(Arc<NativeCore>, Arc<DriverShared>)> {
-        let core = NativeCore::create_with_transport(
-            Self::ROOM_CORE_PLACEHOLDER,
-            "room",
-            "room",
-            Self::ROOM_CORE_PLACEHOLDER,
-            TurnControlTransport::Datagram,
-        )?;
-        let (snapshot, _) = watch::channel(CoreSnapshot::default());
-        let shared = Arc::new(DriverShared {
-            snapshot,
-            wake: Notify::new(),
-            closing: AtomicBool::new(false),
-            terminal_present: AtomicBool::new(false),
-            control_sent: AtomicBool::new(false),
-            // A room seat needs no ChannelBind; a non-zero channel marks it ready.
-            channel: AtomicU16::new(1),
-            queue_full_drops: AtomicU64::new(0),
-            outbound_queue_full_drops: AtomicU64::new(0),
-            pool_deficit_drops: AtomicU64::new(0),
-            #[cfg(test)]
-            native_pumps: AtomicU64::new(0),
-        });
-        Ok((core, shared))
-    }
-
-    /// The cascade's path: straight to the server's UDP port, with nothing standing in between.
-    pub async fn direct(peer: SocketAddr, pool: Arc<PacketPool>) -> Result<Arc<Self>> {
-        let bind: SocketAddr = if peer.is_ipv4() { ([0, 0, 0, 0], 0).into() } else { (std::net::Ipv6Addr::UNSPECIFIED, 0).into() };
-        let socket = Arc::new(tokio::net::UdpSocket::bind(bind).await.context("UDP bind")?);
-        socket.connect(peer).await.context("UDP connect")?;
-        // As a call begins: connectivity checks first. Waits only for a server that does not answer them yet.
-        let mut reply = [0u8; 256];
-        for _ in 0..3 {
-            let (check, transaction) = crate::stun_probe::request(&std::array::from_fn(|_| rand::random::<u8>()));
-            socket.send(&check).await.context("STUN")?;
-            let answered = tokio::time::timeout(Duration::from_millis(400), socket.recv(&mut reply)).await;
-            if matches!(answered, Ok(Ok(length)) if crate::stun_probe::is_answer(&reply[..length], &transaction)) {
-                break;
-            }
-        }
-        let (core, shared) = Self::room_core()?;
-        let (mut incoming_tx, incoming_rx) = spsc_ring::channel(ROOM_INCOMING_CAPACITY);
-        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<PacketBuf>(ROOM_OUTBOUND_CAPACITY);
-        let writer = {
-            let shared = shared.clone();
-            let socket = socket.clone();
-            tokio::spawn(async move {
-                while !shared.closing.load(Ordering::Acquire) {
-                    let Ok(next) = tokio::time::timeout(ROOM_CLOSE_POLL, outbound_rx.recv()).await else { continue };
-                    let Some(packet) = next else { break };
-                    // A refused datagram while the server restarts is ordinary loss: the session notices silence itself.
-                    let _ = socket.send(packet.as_slice()).await;
-                }
-            })
-        };
-        let driver = {
-            let shared = shared.clone();
-            tokio::spawn(async move {
-                loop {
-                    let Some(mut packet) = pool.try_acquire() else {
-                        shared.pool_deficit_drops.fetch_add(1, Ordering::Relaxed);
-                        tokio::time::sleep(Duration::from_millis(5)).await;
-                        continue;
-                    };
-                    tokio::select! {
-                        received = socket.recv(packet.read_area()) => {
-                            // A late answer to a repeated check is not session data.
-                            if let Ok(length) = received
-                                && packet.set_read_len(length).is_ok()
-                                && packet.as_slice().first() != Some(&1)
-                                && let Err(TrySendError::Full(_)) = incoming_tx.try_send(packet)
-                            {
-                                shared.queue_full_drops.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                        _ = shared.wake.notified() => {
-                            if shared.closing.load(Ordering::Acquire) {
-                                break;
-                            }
-                        }
-                    }
-                }
-            })
-        };
-        Ok(Arc::new(Self {
-            outbound: TurnOutbound::Room(outbound_tx),
-            core,
-            incoming: Mutex::new(Some(incoming_rx)),
-            shared,
-            relay_address: Mutex::new(SocketAddr::from(([0, 0, 0, 0], 0))),
-            prepare_lock: tokio::sync::Mutex::new(()),
-            driver: Mutex::new(Some(driver)),
-            outbound_queue: None,
-            outbound_writer: Mutex::new(Some(writer)),
-            deallocated: AtomicBool::new(false),
-        }))
-    }
-
-    pub async fn room(
-        room: &crate::jitsi_room::RoomTarget,
-        seat_hint: usize,
-        pool: Arc<PacketPool>,
-    ) -> Result<Arc<Self>> {
-        use crate::jitsi_room::{SERVER_DISPLAY, peers_in};
-        // Guests join a couple at a time: a burst of parallel logins is refused by some instances.
-        static JOIN_GATE: OnceLock<Arc<Semaphore>> = OnceLock::new();
-        let gate = JOIN_GATE.get_or_init(|| Arc::new(Semaphore::new(ROOM_PARALLEL_JOINS))).clone();
-        let mut participant = {
-            let _permit = gate.acquire_owned().await.context("join gate closed")?;
-            crate::jitsi_room::join(room, "mrtt-c").await?
-        };
-        let mut occupants = participant.occupants();
-        let seats = tokio::time::timeout(ROOM_SEAT_WAIT, async {
-            loop {
-                let seats = peers_in(&occupants.borrow(), SERVER_DISPLAY);
-                if !seats.is_empty() {
-                    return Ok::<_, anyhow::Error>(seats);
-                }
-                occupants.changed().await.map_err(|_| anyhow!("комната Jitsi закрыта"))?;
-            }
-        })
-        .await
-        .map_err(|_| anyhow!("сервер MRTT не найден в комнате {room}"))??;
-        ROOM_SEATS.store(seats.len(), std::sync::atomic::Ordering::Release);
-        let seat = seats[seat_hint % seats.len()].clone();
-        let (core, shared) = Self::room_core()?;
-        let (mut incoming_tx, incoming_rx) = spsc_ring::channel(ROOM_INCOMING_CAPACITY);
-        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<PacketBuf>(ROOM_OUTBOUND_CAPACITY);
-        let sender = participant.sender();
-        let writer = {
-            let shared = shared.clone();
-            let seat = seat.clone();
-            tokio::spawn(async move {
-                while !shared.closing.load(Ordering::Acquire) {
-                    let Ok(next) = tokio::time::timeout(ROOM_CLOSE_POLL, outbound_rx.recv()).await else { continue };
-                    let Some(packet) = next else { break };
-                    if let Err(error) = sender.send(&seat, packet.as_slice()).await {
-                        shared.fail(Arc::from(format!("{error:#}")));
-                        break;
-                    }
-                }
-            })
-        };
-        let driver = {
-            let shared = shared.clone();
-            let seat = seat.clone();
-            tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        received = participant.recv() => {
-                            let Some((from, data)) = received else {
-                                shared.fail("комната Jitsi закрыта");
-                                break;
-                            };
-                            if from != seat {
-                                continue;
-                            }
-                            let Some(mut packet) = pool.try_acquire() else {
-                                shared.pool_deficit_drops.fetch_add(1, Ordering::Relaxed);
-                                continue;
-                            };
-                            let area = packet.read_area();
-                            if data.len() > area.len() {
-                                continue;
-                            }
-                            area[..data.len()].copy_from_slice(&data);
-                            if packet.set_read_len(data.len()).is_ok()
-                                && let Err(TrySendError::Full(_)) = incoming_tx.try_send(packet)
-                            {
-                                shared.queue_full_drops.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                        changed = occupants.changed() => {
-                            if changed.is_err() || !peers_in(&occupants.borrow(), SERVER_DISPLAY).contains(&seat) {
-                                shared.fail("сервер MRTT покинул комнату");
-                                break;
-                            }
-                        }
-                        _ = shared.wake.notified() => {
-                            if shared.closing.load(Ordering::Acquire) {
-                                break;
-                            }
-                        }
-                    }
-                }
-                participant.leave().await;
-            })
-        };
-        Ok(Arc::new(Self {
-            outbound: TurnOutbound::Room(outbound_tx),
-            core,
-            incoming: Mutex::new(Some(incoming_rx)),
-            shared,
-            relay_address: Mutex::new(SocketAddr::from(([0, 0, 0, 0], 0))),
-            prepare_lock: tokio::sync::Mutex::new(()),
-            driver: Mutex::new(Some(driver)),
-            outbound_queue: None,
-            outbound_writer: Mutex::new(Some(writer)),
-            deallocated: AtomicBool::new(false),
-        }))
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -746,17 +531,10 @@ impl TurnAllocation {
                 .as_ref()
                 .is_some_and(|queue| !queue.queue.is_full()),
             TurnOutbound::Stream(writer) => writer.can_send(),
-            TurnOutbound::Room(sender) => sender.capacity() > 0,
         }
     }
 
     pub fn try_send_fast(&self, packet: PacketBuf) -> Option<PacketBuf> {
-        if let TurnOutbound::Room(sender) = &self.outbound {
-            if !self.is_alive() {
-                return Some(packet);
-            }
-            return sender.try_send(packet).err().map(|error| error.into_inner());
-        }
         let queue = match (&self.outbound_queue, &self.outbound) {
             (Some(queue), TurnOutbound::Udp(_)) => queue,
             _ => return Some(packet),
@@ -828,11 +606,6 @@ impl TurnAllocation {
             TurnOutbound::Stream(writer) => {
                 encode_channel_data(&mut packet, channel)?;
                 writer.write_data(packet)?;
-                Ok(())
-            }
-            TurnOutbound::Room(sender) => {
-                // Backpressure like the UDP queue: wait for room in the seat's queue, drop only on close.
-                let _ = sender.send(packet).await;
                 Ok(())
             }
         }
@@ -1519,7 +1292,6 @@ async fn pump_native(
                     .context("TURN control UDP send")?;
             }
             TurnOutbound::Stream(writer) => writer.write_control(&control[..length]).await?,
-            TurnOutbound::Room(_) => {}
         }
         shared.control_sent.store(true, Ordering::Release);
     }
@@ -1837,12 +1609,6 @@ mod tests {
         errors.clear();
         assert!(errors.tolerate(&refused));
         assert!(!errors.tolerate(&std::io::Error::from(std::io::ErrorKind::Other)));
-    }
-
-    #[test]
-    fn room_core_placeholder_passes_the_create_check() {
-        let placeholder = TurnAllocation::ROOM_CORE_PLACEHOLDER;
-        assert!(NativeCore::create_with_transport(placeholder, "room", "room", placeholder, TurnControlTransport::Datagram).is_ok());
     }
 
     #[test]

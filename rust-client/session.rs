@@ -94,11 +94,7 @@ pub struct SessionConfig {
     pub server_stream_repair: Arc<AtomicBool>,
     pub repair: Arc<RepairState>,
     pub configured_workers: usize,
-    pub jitsi_room: Option<Arc<crate::jitsi_room::RoomTarget>>,
 }
-
-/// Placeholder TURN address of room workers: their datagrams go through the Jitsi room, not a relay.
-pub const JITSI_ROOM_ADDRESS: &str = "jitsi-room";
 
 pub struct SessionRuntime {
     pub dispatcher: Arc<Dispatcher>,
@@ -948,9 +944,6 @@ pub async fn run_session(
     credentials: TurnCredentials,
     mut runtime: SessionRuntime,
 ) -> Result<bool> {
-    if let Some(room) = config.jitsi_room.clone() {
-        return run_room_session(config, room, runtime).await;
-    }
     if credentials.server_addresses.is_empty() {
         bail!("нет TURN URL в учётных данных");
     }
@@ -1014,50 +1007,6 @@ pub async fn run_session(
         allocation.clone(),
         turn_path,
     ));
-    let result = await_session_task(&cancel, session).await;
-    let _ = tokio::time::timeout(DEALLOCATE_TIMEOUT, allocation.deallocate()).await;
-    result
-}
-
-/// A worker seated in the server's Jitsi room: the room stands in for the TURN allocation, the rest is unchanged.
-async fn run_room_session(
-    mut config: SessionConfig,
-    room: Arc<crate::jitsi_room::RoomTarget>,
-    mut runtime: SessionRuntime,
-) -> Result<bool> {
-    let cancel = runtime.cancel.clone();
-    crate::log_error!("[JITSI] Вход в комнату {room}");
-    if let Some(started) = runtime.allocation_started.take() {
-        let _ = started.send(());
-    }
-    let allocation = tokio::select! {
-        biased;
-        result = async {
-            if room.host == crate::turn::DIRECT_HOST {
-                TurnAllocation::direct(config.peer, runtime.pool.clone()).await
-            } else {
-                TurnAllocation::room(&room, config.id, runtime.pool.clone()).await
-            }
-        } => result.map_err(|error| {
-            crate::log_error!("[JITSI] Воркер #{}: {error:#}", config.id);
-            TurnAllocateError(error)
-        })?,
-        _ = cancel.cancelled() => return Ok(false),
-    };
-    // A worker is a participant: no more of them than the server holds seats, and the server is told the same.
-    let seats = crate::turn::ROOM_SEATS.load(Ordering::Acquire);
-    if seats > 0 {
-        let workers = seats.min(config.configured_workers.max(1));
-        config.configured_workers = workers;
-        runtime.configured_workers = workers;
-        apply_workers_limit(workers, runtime.target_workers.as_ref(), runtime.scale_notify.as_ref());
-        runtime.events.room_seats(workers);
-    }
-    if let Some(ready) = runtime.allocation_ready.take() {
-        let _ = ready.send(());
-    }
-    crate::log_error!("[JITSI] Воркер #{} сел в комнату, место сервера найдено", config.id);
-    let session = tokio::spawn(run_allocated_session(config, runtime, allocation.clone(), Arc::from(JITSI_ROOM_ADDRESS)));
     let result = await_session_task(&cancel, session).await;
     let _ = tokio::time::timeout(DEALLOCATE_TIMEOUT, allocation.deallocate()).await;
     result
@@ -1687,7 +1636,6 @@ mod tests {
             server_stream_repair: Arc::new(AtomicBool::new(false)),
             repair: RepairState::new(18),
             configured_workers: 18,
-            jitsi_room: None,
         };
         assert_eq!(
             select_turn_address(&addresses, &config).unwrap(),
@@ -1716,7 +1664,6 @@ mod tests {
             server_stream_repair: Arc::new(AtomicBool::new(false)),
             repair: RepairState::new(9),
             configured_workers: 18,
-            jitsi_room: None,
         };
         assert_eq!(
             build_registration_payload(&config).as_ref(),

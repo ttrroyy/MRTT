@@ -1592,7 +1592,6 @@ async fn windows_client_reaches_wsl_server_through_a_real_turn_channel_and_dispa
             server_stream_repair: Arc::new(AtomicBool::new(false)),
             repair: RepairState::new(9),
             configured_workers: 1,
-            jitsi_room: None,
         },
         TurnCredentials {
             username: Arc::from(USERNAME),
@@ -1768,7 +1767,6 @@ async fn windows_client_reaches_wsl_server_over_dtls_srtp() {
             server_stream_repair: Arc::new(AtomicBool::new(false)),
             repair: RepairState::new(9),
             configured_workers: 1,
-            jitsi_room: None,
         },
         TurnCredentials {
             username: Arc::from(USERNAME),
@@ -1948,7 +1946,6 @@ async fn getconf_timeout_recovers_without_terminating_the_tunnel() {
             server_stream_repair: Arc::new(AtomicBool::new(false)),
             repair: RepairState::new(1),
             configured_workers: 1,
-            jitsi_room: None,
         },
         TurnCredentials {
             username: Arc::from(USERNAME),
@@ -2023,7 +2020,6 @@ async fn getconf_timeout_recovers_without_terminating_the_tunnel() {
             server_stream_repair: Arc::new(AtomicBool::new(false)),
             repair: RepairState::new(1),
             configured_workers: 1,
-            jitsi_room: None,
         },
         TurnCredentials {
             username: Arc::from(USERNAME),
@@ -2138,7 +2134,6 @@ async fn running_client_receives_hot_dns_configuration_without_reconnect() {
             server_stream_repair: Arc::new(AtomicBool::new(false)),
             repair: RepairState::new(1),
             configured_workers: 1,
-            jitsi_room: None,
         },
         TurnCredentials {
             username: Arc::from(USERNAME),
@@ -2333,7 +2328,6 @@ async fn nine_windows_workers_register_with_a_wsl_server_without_missing_or_dupl
                 server_stream_repair: server_stream_repair.clone(),
                 repair: repair.clone(),
                 configured_workers: 1,
-                jitsi_room: None,
             },
             TurnCredentials {
                 username: Arc::from(USERNAME),
@@ -2791,7 +2785,6 @@ async fn linux_workers_hold_per_stream_rate_through_server_dataplane() {
                 server_stream_repair: server_stream_repair.clone(),
                 repair: repair.clone(),
                 configured_workers: 1,
-                jitsi_room: None,
             },
             TurnCredentials {
                 username: Arc::from(USERNAME),
@@ -3043,7 +3036,6 @@ async fn assert_fatal_auth_case(wrap_pwd: &str, session_pwd: &str, expected_need
             server_stream_repair: Arc::new(AtomicBool::new(false)),
             repair: RepairState::new(1),
             configured_workers: 1,
-            jitsi_room: None,
         },
         TurnCredentials {
             username: Arc::from(USERNAME),
@@ -3195,7 +3187,6 @@ async fn streams_partial_death_keeps_tunnel_and_dataplane_alive() {
                 server_stream_repair: server_stream_repair.clone(),
                 repair: repair.clone(),
                 configured_workers: 1,
-                jitsi_room: None,
             },
             TurnCredentials {
                 username: Arc::from(USERNAME),

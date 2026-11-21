@@ -46,10 +46,8 @@ slab = "0.4"
 socket2 = "0.6"
 subtle = "2.6"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "fs", "process", "io-util"] }
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tun = "=0.8.14"
-webrtc = { version = "0.21", default-features = false, features = ["runtime-tokio", "crypto-aws-lc-rs"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 
 [target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]

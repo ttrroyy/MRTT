@@ -1081,8 +1081,7 @@ object TunnelManager {
             params.vkAuthMode
         }
         val maxMode = params.maxGroupId.isNotBlank()
-        val jitsiMode = params.jitsiRoom.isNotBlank()
-        if (hashList.isEmpty() && !jsHashMode && !maxMode && !jitsiMode) {
+        if (hashList.isEmpty() && !jsHashMode && !maxMode) {
             failStartLocked("hash_error", "Ошибка: Хеш не указан")
             return
         }
@@ -1090,7 +1089,7 @@ object TunnelManager {
             failStartLocked("max_token_error", "MAX token не указан: войдите в MAX или введите токен в настройках")
             return
         }
-        if (jsHashMode && params.vkAccessToken.isBlank() && !maxMode && !jitsiMode) {
+        if (jsHashMode && params.vkAccessToken.isBlank() && !maxMode) {
             failStartLocked("vk_token_error", "Ошибка: VK access token не указан")
             return
         }
@@ -1102,21 +1101,15 @@ object TunnelManager {
         }
 
         // MAX has no VK hashes, so the hash-count cap would pin it at one group.
-        val totalWorkers = if (jitsiMode) {
-            // A worker is a room participant: more workers than server seats would only share seats.
-            // The link knows the server's seats: as many workers. With an own room the client learns them after joining.
-            clampJitsiWorkers(params.jitsiSeats.takeIf { it > 0 } ?: params.jitsiWorkers)
-        } else {
-            WorkerCountPolicy.normalizeForHashValues(
-                params.workersPerHash,
-                hashList,
-                params.allowHashRedistribution || jsHashMode || maxMode,
-            )
-        }
+        val totalWorkers = WorkerCountPolicy.normalizeForHashValues(
+            params.workersPerHash,
+            hashList,
+            params.allowHashRedistribution || jsHashMode || maxMode,
+        )
         targetWorkers.value = totalWorkers
         FullLog.add(
             "запуск",
-            "транспорт=${when { jitsiMode -> "Jitsi ${params.jitsiRoom}, мест у сервера ${params.jitsiSeats.takeIf { it > 0 } ?: "?"}"; maxMode -> "MAX"; else -> "VK ${params.vkAuthMode}" }}, " +
+            "транспорт=${if (maxMode) "MAX" else "VK ${params.vkAuthMode}"}, " +
                 "воркеров=$totalWorkers, сервер=${params.peer.substringBeforeLast(':')}:***, MTU=${params.mtu}",
         )
         val cmd = mutableListOf(
@@ -1128,19 +1121,16 @@ object TunnelManager {
             "-listen", "${MrttConstants.Network.LOCAL_LISTEN_HOST}:${params.port}",
             "-tun-uds", "mrtt_tun_uds",
         )
-        if (jitsiMode) {
-            cmd.add("--jitsi")
-            cmd.add(params.jitsiRoom)
-        } else if (maxMode) {
+        if (maxMode) {
             cmd.add("--max")
             cmd.add(params.maxGroupId)
         }
-        if (hashList.isNotEmpty() && !maxMode && !jitsiMode) {
+        if (hashList.isNotEmpty() && !maxMode) {
             cmd.add("-vk")
             cmd.add(hashList.joinToString(","))
         }
         cmd.add("-vk-hash-mode")
-        cmd.add(if (maxMode || jitsiMode) MrttConstants.VkAutoHash.MODE_MANUAL else params.vkHashMode)
+        cmd.add(if (maxMode) MrttConstants.VkAutoHash.MODE_MANUAL else params.vkHashMode)
         if (params.fingerprint.isNotEmpty()) {
             cmd.add("-fingerprint")
             cmd.add(params.fingerprint)
@@ -1155,8 +1145,7 @@ object TunnelManager {
         cmd.add(params.turnTransport)
         cmd.add("-srtp-mode")
         cmd.add(params.srtpMode)
-        // Свои TURN-подсети относятся к VK: Jitsi работает через комнату, без TURN
-        if (params.customTurnIps.isNotBlank() && !jitsiMode) {
+        if (params.customTurnIps.isNotBlank()) {
             cmd.add("-custom-turn-ips")
             cmd.add(params.customTurnIps)
         }
@@ -1243,7 +1232,7 @@ object TunnelManager {
             failStartLocked("critical_start_error", "Критическая ошибка запуска: ${e.readableMessage()}")
             return
         }
-        if ((jsHashMode || maxMode) && !jitsiMode) {
+        if ((jsHashMode || maxMode)) {
             val bootstrap = JSONObject()
                 .put("token", if (maxMode) params.maxAccessToken else params.vkAccessToken)
                 .toString()
@@ -2237,9 +2226,6 @@ data class TunnelParams(
     val vkAccessToken: String = "",
     val maxGroupId: String = "",
     val maxAccessToken: String = "",
-    val jitsiRoom: String = "",
-    val jitsiWorkers: Int = MrttConstants.Tunnel.DEFAULT_JITSI_WORKERS,
-    val jitsiSeats: Int = 0,
     val customTurnIps: String = "",
     val domainRoutingEnabled: Boolean = false,
     val domainIsWhitelist: Boolean = false,

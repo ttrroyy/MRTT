@@ -119,7 +119,6 @@ pub struct VkAuth {
     captcha: Arc<CaptchaSolver>,
     captcha_lockout_until: AtomicI64,
     rate_limit_lockout_until: AtomicI64,
-    jitsi_room: bool,
 }
 
 struct LegacyAttempt<'a> {
@@ -152,14 +151,7 @@ impl VkAuth {
             captcha,
             captcha_lockout_until: AtomicI64::new(0),
             rate_limit_lockout_until: AtomicI64::new(0),
-            jitsi_room: false,
         }
-    }
-
-    /// Workers join the server's Jitsi room instead of a TURN relay, so there is nothing to fetch.
-    pub fn with_jitsi_room(mut self) -> Self {
-        self.jitsi_room = true;
-        self
     }
 
     pub fn client_ids(&self) -> String {
@@ -171,13 +163,6 @@ impl VkAuth {
     }
 
     pub async fn get_credentials(&self, link: &str, stream_id: usize) -> Result<TurnCredentials> {
-        if self.jitsi_room {
-            return Ok(TurnCredentials {
-                username: Arc::from(""),
-                password: Arc::from(""),
-                server_addresses: vec![Arc::from(crate::session::JITSI_ROOM_ADDRESS)].into(),
-            });
-        }
         if self.mode.as_ref() == "auto_js" {
             let credential_id = stream_id / 100;
             let auto_js_result = match self.auto_js.as_ref() {

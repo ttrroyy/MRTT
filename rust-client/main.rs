@@ -13,12 +13,6 @@ mod dns;
 #[path = "../shared/dtls.rs"]
 pub mod dtls;
 mod events;
-// Seat bookkeeping helpers of the shared module serve the server only.
-#[allow(dead_code)]
-#[path = "../shared/jitsi_room.rs"]
-mod jitsi_room;
-#[path = "../shared/stun_probe.rs"]
-mod stun_probe;
 mod logging;
 mod max_calls;
 mod namegen;
@@ -104,9 +98,6 @@ struct Arguments {
     // MAX group IDs may be negative; clap must accept -123 as a value.
     #[arg(long, default_value = "", allow_hyphen_values = true)]
     max: String,
-    /// Jitsi room `host/room` of the server: every worker is a guest there and talks to the server's seats.
-    #[arg(long, default_value = "")]
-    jitsi: String,
     #[arg(long, default_value = "manual")]
     vk_hash_mode: String,
     #[arg(long, default_value = "")]
@@ -200,9 +191,6 @@ fn main() {
         }
         return;
     }
-    jitsi_room::set_fallback_resolver(|host| {
-        Box::pin(async move { crate::dns::global().lookup(&host).await.unwrap_or_default() })
-    });
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("[PANIC] Rust client task failed: {info}\n");
         #[cfg(unix)]
@@ -284,27 +272,11 @@ async fn run(arguments: Arguments) -> Result<i32> {
         run_vk_hash_validation(&arguments).await?;
         return Ok(EXIT_NORMAL);
     }
-    if !arguments.jitsi.trim().is_empty() {
-        bail!("Jitsi is no longer supported");
-    }
     let max_mode = !arguments.max.trim().is_empty();
     if max_mode && (!arguments.vk.trim().is_empty() || arguments.vk_hash_mode == "auto_js") {
         bail!("[MAX] Режимы MAX и VK взаимоисключающие в одном экземпляре клиента");
     }
-    let jitsi_room = if arguments.jitsi.trim().is_empty() {
-        None
-    } else {
-        Some(Arc::new(
-            jitsi_room::RoomTarget::parse(&arguments.jitsi).context("[JITSI] Комната должна быть в виде host/room")?,
-        ))
-    };
-    let jitsi_mode = jitsi_room.is_some();
-    if jitsi_mode
-        && (max_mode || !arguments.vk.trim().is_empty() || arguments.vk_hash_mode == "auto_js")
-    {
-        bail!("[JITSI] Режим Jitsi нельзя совмещать с VK или MAX в одном экземпляре клиента");
-    }
-    let js_hash_mode = !jitsi_mode && (arguments.vk_hash_mode == "auto_js" || max_mode);
+    let js_hash_mode = arguments.vk_hash_mode == "auto_js" || max_mode;
     let mut vk_auth_mode = arguments.vk_auth_mode.clone();
     let js_auth_mode = if max_mode {
         vk_auth_mode = "auto_js".to_owned();
@@ -318,7 +290,7 @@ async fn run(arguments: Arguments) -> Result<i32> {
     } else {
         vk_auth_mode == "auto_js"
     };
-    if arguments.peer.is_empty() || (!js_hash_mode && !jitsi_mode && arguments.vk.is_empty()) {
+    if arguments.peer.is_empty() || (!js_hash_mode && arguments.vk.is_empty()) {
         bail!("[КЛИЕНТ] Нужны -peer и хеши VK");
     }
     let password = std::env::var("MRTT_PASSWORD").unwrap_or_default();
@@ -335,10 +307,7 @@ async fn run(arguments: Arguments) -> Result<i32> {
     let session_profile = profiles::random_profile(&arguments.fingerprint);
     let mut js_calls = None;
     let mut js_credential_broker = None;
-    let hash_source = if jitsi_mode {
-        // One pseudo-hash keeps the group machinery: room workers need no credentials.
-        "jitsiroom".to_owned()
-    } else if max_mode {
+    let hash_source = if max_mode {
         let bootstrap = read_max_bootstrap(&mut stdin).await?;
         let group_ids: Vec<String> = arguments
             .max
@@ -395,16 +364,13 @@ async fn run(arguments: Arguments) -> Result<i32> {
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .collect();
-    let mut auth = VkAuth::new(
+    let auth = VkAuth::new(
         &vk_auth_mode,
         session_profile,
         &client_ids,
         captcha.clone(),
         js_credential_broker,
     );
-    if jitsi_mode {
-        auth = auth.with_jitsi_room();
-    }
     let auth = Arc::new(auth);
     let stats = Arc::new(Stats::default());
     let paused = Arc::new(PauseGate::new());
@@ -494,7 +460,6 @@ async fn run(arguments: Arguments) -> Result<i32> {
         password: Arc::from(password.as_str()),
         workers: params_workers,
         configured_workers: workers,
-        jitsi_room,
     });
     print_configuration(
         &arguments,
@@ -703,7 +668,6 @@ fn normalize_cli_argument(argument: String) -> String {
         "listen",
         "vk",
         "max",
-        "jitsi",
         "vk-hash-mode",
         "peer",
         "client-ids",
