@@ -186,7 +186,7 @@ private fun JSONObject.toAppReleaseInfo(): AppReleaseInfo? {
     val releaseUrl = optString("html_url").trim()
     if (versionTag.isBlank() || releaseUrl.isBlank()) return null
     val assets = optJSONArray("assets") ?: JSONArray()
-    val apkNames = (Build.SUPPORTED_ABIS.toList() + "universal").map { "app-$it-maxTest.apk" }
+    val apkNames = (Build.SUPPORTED_ABIS.toList() + "universal").flatMap { listOf("MRTT-$it.apk", "app-$it-maxTest.apk") }
     val build = apkNames.firstNotNullOfOrNull { name ->
         (0 until assets.length()).mapNotNull(assets::optJSONObject).firstOrNull { it.optString("name") == name }
     }

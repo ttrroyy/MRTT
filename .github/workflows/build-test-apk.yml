@@ -292,3 +292,15 @@ jobs:
           path: app/build/outputs/apk/maxTest/*.apk
           if-no-files-found: error
           retention-days: 7
+      - name: Pack the verified server deployment files
+        working-directory: app/src/main/assets
+        run: |
+          tar -czf "$RUNNER_TEMP/mrtt-server-v1.0.tar.gz" deploy.sh cascade.sh mrtt-linux-* mrtt-exit-client-*
+          cd "$RUNNER_TEMP"
+          sha256sum mrtt-server-v1.0.tar.gz > mrtt-server-v1.0.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MRTT-server-release
+          path: ${{ runner.temp }}/mrtt-server-v1.0.tar.gz*
+          if-no-files-found: error
+          retention-days: 7

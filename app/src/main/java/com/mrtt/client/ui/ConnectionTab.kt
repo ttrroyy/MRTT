@@ -395,6 +395,11 @@ private fun TunnelConnectionPanel(
 
             TunnelUptimeText(tunnelRunning = tunnelRunning || autoPausedForWifi || tunnelStopping)
 
+            if (tunnelRunning && !tunnelStopping) {
+                com.mrtt.client.ui.components.MrttSpeedReadout()
+                com.mrtt.client.ui.components.MrttSpeedChart(height = 64.dp)
+            }
+
             if (showWorkers) {
                 Text(
                     text = transportLabel,

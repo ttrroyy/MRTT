@@ -77,8 +77,8 @@ android {
         applicationId = "app.mrtt"
         minSdk = 26
         targetSdk = 37
-        versionCode = 243
-        versionName = "1.0-beta1"
+        versionCode = 244
+        versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

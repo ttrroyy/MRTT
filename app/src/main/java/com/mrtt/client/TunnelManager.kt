@@ -387,6 +387,8 @@ object TunnelManager {
                 nativeProcessPid = event.pid
             }
             is TunnelEventParser.Event.Stats -> {
+                TrafficMonitor.onStats(event.bytesUp, event.bytesDown, event.active)
+                TrafficMonitor.startTicking()
                 activeWorkers.value = event.active
                 if (workerRecoveryPolicy.observe(event.active)) {
                     workerRecoveryJob?.cancel()
@@ -414,6 +416,7 @@ object TunnelManager {
             is TunnelEventParser.Event.NetworkSuspect -> verifyVkReachability(identity)
             is TunnelEventParser.Event.ServerRestart -> schedulePanelServerRestart(identity)
             is TunnelEventParser.Event.Ready -> {
+                TrafficMonitor.workerReady(event.worker)
                 identity.startupProgress.streamReady()
                 if (event.worker == 0 || identity.readyWorkers.add(event.worker)) {
                     updateProcessLog(identity, "ready", "[ВОРКЕР] Поток готов ✓", 20, false, LogLevel.OK)
@@ -1016,6 +1019,7 @@ object TunnelManager {
                     lifecycleState.requestRestart() ?: return@withLock
                 } else {
                     clearLogs()
+                    TrafficMonitor.reset()
                     config.value = null
                     stats.value = "Ожидание данных..."
                     wrapAuthTimeoutCount = 0
@@ -1865,6 +1869,8 @@ object TunnelManager {
             )
         }
         terminateProcessLocked(identity, finishVkCalls)
+        TrafficMonitor.stopTicking()
+        TrafficMonitor.onTunnelStopped()
         running.value = false
         stopping.value = false
         activeWorkers.value = 0
