@@ -1,0 +1,92 @@
+name: Publish verified MRTT
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Build MRTT APK run on dev
+        required: true
+      sha:
+        description: Commit tested by that run
+        required: true
+      tag:
+        description: Stable release tag (vX.Y or vX.Y.Z)
+        required: true
+      notes:
+        description: Release notes
+        required: true
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/stable'
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.run_id }}
+      TARGET_SHA: ${{ inputs.sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_NOTES: ${{ inputs.notes }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Verify the tested source
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ && "$TARGET_SHA" =~ ^[0-9a-f]{40}$ && "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
+          git merge-base --is-ancestor "$TARGET_SHA" HEAD
+          git diff --exit-code "$TARGET_SHA" HEAD -- . ':!.github/workflows'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" | jq -e --arg sha "$TARGET_SHA" \
+            '.path == ".github/workflows/build-test-apk.yml" and .head_branch == "dev" and .head_sha == $sha and .conclusion == "success"'
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release already exists: $RELEASE_TAG"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          pattern: MRTT-*
+          path: dist
+          merge-multiple: true
+      - uses: android-actions/setup-android@v4
+      - name: Verify packages and deployment archive
+        run: |
+          set -euo pipefail
+          sdkmanager --channel=3 --install "build-tools;36.0.0"
+          sdk="$ANDROID_HOME/build-tools/36.0.0"
+          mkdir previous
+          gh release download v1.0-beta1 -p '*arm64-v8a.apk' -D previous
+          cert_digest() {
+            "$sdk/apksigner" verify --print-certs "$1" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
+          }
+          previous_cert=$(cert_digest "$(find previous -type f -name '*.apk' -print -quit)")
+          [[ "$previous_cert" =~ ^[0-9a-f]{64}$ ]]
+          shopt -s nullglob
+          apks=(dist/*.apk)
+          test "${#apks[@]}" -eq 4
+          for apk in "${apks[@]}"; do
+            test "$(cert_digest "$apk")" = "$previous_cert"
+          done
+          for abi in arm64-v8a armeabi-v7a x86_64 universal; do
+            builds=(dist/*"$abi"*.apk)
+            test "${#builds[@]}" -eq 1
+            mv "${builds[0]}" "dist/MRTT-$abi.apk"
+          done
+          (
+            cd dist
+            sha256sum -c mrtt-server-*.tar.gz.sha256
+            tar -tzf mrtt-server-*.tar.gz | sort > "$RUNNER_TEMP/server-list.txt"
+            printf '%s\n' cascade.sh deploy.sh mrtt-exit-client-amd64 mrtt-exit-client-arm64 mrtt-linux-amd64 mrtt-linux-arm64 mrtt-linux-armv7 | sort | diff - "$RUNNER_TEMP/server-list.txt"
+          )
+      - name: Publish the verified release
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/notes.md"
+          gh release create "$RELEASE_TAG" dist/MRTT-*.apk dist/mrtt-server-*.tar.gz* \
+            --draft --target "$TARGET_SHA" --title "MRTT ${RELEASE_TAG#v}" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release edit "$RELEASE_TAG" --draft=false --latest
